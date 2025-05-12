@@ -1,0 +1,266 @@
+# Resource Group
+module "resource_group" {
+  source   = "./../../modules/resource_group"
+  name     = "{{ resource_group_name }}"
+  location = "{{ location }}"
+  tags     = var.tags
+}
+
+# Key Vault
+module "key_vault" {
+  source              = "./../../modules/key_vault"
+  depends_on          = [module.resource_group]
+  for_each            = {
+    {%- for vault in key_vaults|default([]) %}
+    "{{ vault.name }}" = {
+      "name": "{{ vault.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "sku_name": "{{ vault.sku_name|default('standard') }}"
+      "soft_delete_retention_days": {{ vault.soft_delete_retention_days|default(7) }}
+      "purge_protection_enabled": {{ vault.purge_protection_enabled|default(false)|lower }}
+      "enabled_for_disk_encryption": {{ vault.enabled_for_disk_encryption|default(true)|lower }}
+      "secrets": {{ vault.secrets|default([])|tojson }}
+      "access_policies": {{ vault.access_policies|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                      = each.value.name
+  resource_group_name       = each.value.resource_group_name
+  location                  = each.value.location
+  sku_name                  = each.value.sku_name
+  soft_delete_retention_days = each.value.soft_delete_retention_days
+  purge_protection_enabled  = each.value.purge_protection_enabled
+  enabled_for_disk_encryption = each.value.enabled_for_disk_encryption
+  secrets                   = each.value.secrets
+  access_policies           = each.value.access_policies
+  tags                      = var.tags
+}
+
+# Storage Account
+module "storage_account" {
+  source            = "./../../modules/storage_account"
+  depends_on        = [module.resource_group]
+  for_each          = {
+    {%- for storage in storage_accounts|default([]) %}
+    "{{ storage.name }}" = {
+      "name": "{{ storage.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "account_tier": "{{ storage.account_tier|default('Standard') }}"
+      "account_replication_type": "{{ storage.account_replication_type|default('LRS') }}"
+      "is_hns_enabled": {{ storage.is_hns_enabled|default(false)|lower }}
+      "containers": {{ storage.containers|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                     = each.value.name
+  resource_group_name      = each.value.resource_group_name
+  location                 = each.value.location
+  account_tier             = each.value.account_tier
+  account_replication_type = each.value.account_replication_type
+  is_hns_enabled           = each.value.is_hns_enabled
+  containers               = each.value.containers
+  tags                     = var.tags
+}
+
+# SQL Server
+module "sql_server" {
+  source              = "./../../modules/sql_server"
+  depends_on          = [module.resource_group, module.key_vault]
+  for_each            = {
+    {%- for server in sql_servers|default([]) %}
+    "{{ server.name }}" = {
+      "name": "{{ server.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "version": "{{ server.version|default('12.0') }}"
+      "administrator_login": "{{ server.administrator_login }}"
+      "administrator_login_password_key_vault_name": "{{ server.administrator_login_password_key_vault_name }}"
+      "administrator_login_password_key_vault_secret_name": "{{ server.administrator_login_password_key_vault_secret_name }}"
+      "databases": {{ server.databases|default([])|tojson }}
+      "firewall_rules": {{ server.firewall_rules|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                                  = each.value.name
+  resource_group_name                   = each.value.resource_group_name
+  location                              = each.value.location
+  version                               = each.value.version
+  administrator_login                   = each.value.administrator_login
+  administrator_login_password_key_vault_name = each.value.administrator_login_password_key_vault_name
+  administrator_login_password_key_vault_secret_name = each.value.administrator_login_password_key_vault_secret_name
+  databases                             = each.value.databases
+  firewall_rules                        = each.value.firewall_rules
+  tags                                  = var.tags
+}
+
+# Cosmos DB
+module "cosmos_db" {
+  source              = "./../../modules/cosmos_db"
+  depends_on          = [module.resource_group]
+  for_each            = {
+    {%- for account in cosmos_db|default([]) %}
+    "{{ account.name }}" = {
+      "name": "{{ account.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "offer_type": "{{ account.offer_type|default('Standard') }}"
+      "kind": "{{ account.kind|default('MongoDB') }}"
+      "consistency_level": "{{ account.consistency_level|default('Session') }}"
+      "databases": {{ account.databases|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                = each.value.name
+  resource_group_name = each.value.resource_group_name
+  location            = each.value.location
+  offer_type          = each.value.offer_type
+  kind                = each.value.kind
+  consistency_level   = each.value.consistency_level
+  databases           = each.value.databases
+  tags                = var.tags
+}
+
+# Data Factory
+module "data_factory" {
+  source              = "./../../modules/data_factory"
+  depends_on          = [module.resource_group, module.storage_account, module.sql_server, module.cosmos_db, module.databricks_workspace]
+  for_each            = {
+    {%- for factory in data_factories|default([]) %}
+    "{{ factory.name }}" = {
+      "name": "{{ factory.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "managed_virtual_network_enabled": {{ factory.managed_virtual_network_enabled|default(true)|lower }}
+      "public_network_enabled": {{ factory.public_network_enabled|default(true)|lower }}
+      "github_configuration": {{ factory.github_configuration|default({})|tojson }}
+      "linked_services": {{ factory.linked_services|default([])|tojson }}
+      "integration_runtimes": {{ factory.integration_runtimes|default([])|tojson }}
+      "pipelines": {{ factory.pipelines|default([])|tojson }}
+      "datasets": {{ factory.datasets|default([])|tojson }}
+      "data_flows": {{ factory.data_flows|default([])|tojson }}
+      "triggers": {{ factory.triggers|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                           = each.value.name
+  resource_group_name            = each.value.resource_group_name
+  location                       = each.value.location
+  managed_virtual_network_enabled = each.value.managed_virtual_network_enabled
+  public_network_enabled         = each.value.public_network_enabled
+  github_configuration           = each.value.github_configuration
+  linked_services                = each.value.linked_services
+  integration_runtimes           = each.value.integration_runtimes
+  pipelines                      = each.value.pipelines
+  datasets                       = each.value.datasets
+  data_flows                     = each.value.data_flows
+  triggers                       = each.value.triggers
+  tags                           = var.tags
+}
+
+# Databricks Workspace
+module "databricks_workspace" {
+  source              = "./../../modules/databricks_workspace"
+  depends_on          = [module.resource_group]
+  for_each            = {
+    {%- for workspace in databricks_workspace|default([]) %}
+    "{{ workspace.name }}" = {
+      "name": "{{ workspace.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "sku": "{{ workspace.sku|default('standard') }}"
+      "managed_resource_group_name": "{{ workspace.managed_resource_group_name }}"
+    },
+    {%- endfor %}
+  }
+  name                        = each.value.name
+  resource_group_name         = each.value.resource_group_name
+  location                    = each.value.location
+  sku                         = each.value.sku
+  managed_resource_group_name = each.value.managed_resource_group_name
+  tags                        = var.tags
+}
+
+# Synapse Analytics
+module "synapse" {
+  source              = "./../../modules/synapse"
+  depends_on          = [module.resource_group, module.storage_account, module.key_vault]
+  for_each            = {
+    {%- for workspace in synapse_workspaces|default([]) %}
+    "{{ workspace.name }}" = {
+      "name": "{{ workspace.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "storage_account_name": "{{ workspace.storage_account_name }}"
+      "storage_container": "{{ workspace.storage_container }}"
+      "sql_administrator_login": "{{ workspace.sql_administrator_login }}"
+      "sql_administrator_login_password_key_vault_name": "{{ workspace.sql_administrator_login_password_key_vault_name }}"
+      "sql_administrator_login_password_key_vault_secret_name": "{{ workspace.sql_administrator_login_password_key_vault_secret_name }}"
+      "managed_virtual_network_enabled": {{ workspace.managed_virtual_network_enabled|default(true)|lower }}
+      "sql_pools": {{ workspace.sql_pools|default([])|tojson }}
+      "spark_pools": {{ workspace.spark_pools|default([])|tojson }}
+      "firewall_rules": {{ workspace.firewall_rules|default([])|tojson }}
+    },
+    {%- endfor %}
+  }
+  name                                  = each.value.name
+  resource_group_name                   = each.value.resource_group_name
+  location                              = each.value.location
+  storage_account_name                  = each.value.storage_account_name
+  storage_container                     = each.value.storage_container
+  sql_administrator_login               = each.value.sql_administrator_login
+  sql_administrator_login_password_key_vault_name = each.value.sql_administrator_login_password_key_vault_name
+  sql_administrator_login_password_key_vault_secret_name = each.value.sql_administrator_login_password_key_vault_secret_name
+  managed_virtual_network_enabled       = each.value.managed_virtual_network_enabled
+  sql_pools                             = each.value.sql_pools
+  spark_pools                           = each.value.spark_pools
+  firewall_rules                        = each.value.firewall_rules
+  tags                                  = var.tags
+}
+
+# Application Insights
+module "application_insights" {
+  source              = "./../../modules/application_insights"
+  depends_on          = [module.resource_group]
+  for_each            = {
+    {%- for insights in application_insights|default([]) %}
+    "{{ insights.name }}" = {
+      "name": "{{ insights.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "application_type": "{{ insights.application_type|default('web') }}"
+      "retention_in_days": {{ insights.retention_in_days|default(90) }}
+    },
+    {%- endfor %}
+  }
+  name                = each.value.name
+  resource_group_name = each.value.resource_group_name
+  location            = each.value.location
+  application_type    = each.value.application_type
+  retention_in_days   = each.value.retention_in_days
+  tags                = var.tags
+}
+
+# Log Analytics Workspace
+module "log_analytics_workspace" {
+  source              = "./../../modules/log_analytics_workspace"
+  depends_on          = [module.resource_group]
+  for_each            = {
+    {%- for workspace in log_analytics_workspace|default([]) %}
+    "{{ workspace.name }}" = {
+      "name": "{{ workspace.name }}"
+      "resource_group_name": "{{ resource_group_name }}"
+      "location": "{{ location }}"
+      "sku": "{{ workspace.sku|default('PerGB2018') }}"
+      "retention_in_days": {{ workspace.retention_in_days|default(30) }}
+    },
+    {%- endfor %}
+  }
+  name                = each.value.name
+  resource_group_name = each.value.resource_group_name
+  location            = each.value.location
+  sku                 = each.value.sku
+  retention_in_days   = each.value.retention_in_days
+  tags                = var.tags
+}

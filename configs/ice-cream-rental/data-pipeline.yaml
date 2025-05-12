@@ -1,0 +1,189 @@
+---
+project_id: "ice-cream-rental"
+ecosystem: "data-pipeline"
+environment: "dev"
+location: "westeurope"
+resource_group_name: "rg-ice-cream-rental-dev"
+terraform_state_storage_account: "icecreamtfstatedev"
+
+tags:
+  environment: "dev"
+  project: "ice-cream-rental"
+  business_unit: "analytics"
+  owner: "data-team"
+
+key_vaults:
+  - name: "kv-ice-cream-rental-dev"
+    sku_name: "standard"
+    purge_protection_enabled: false
+    enabled_for_disk_encryption: true
+    secrets:
+      - name: "sql-admin-password"
+        value: "{{ sql_admin_password }}"
+      - name: "storage-account-key"
+        value: "{{ storage_account_key }}"
+      - name: "databricks-access-token"
+        value: "{{ databricks_access_token }}"
+      - name: "weather-api-key"
+        value: "{{ weather_api_key }}"
+    access_policies:
+      - object_id: "00000000-0000-0000-0000-000000000000"  # Replace with actual service principal ID
+        secret_permissions: ["Get", "List", "Set", "Delete"]
+
+storage_accounts:
+  - name: "stgicecreamrentaldev"
+    account_tier: "Standard"
+    account_replication_type: "LRS"
+    is_hns_enabled: true  # Hierarchical namespace for Data Lake Gen2
+    containers:
+      - name: "raw"
+        container_access_type: "private"
+      - name: "bronze"
+        container_access_type: "private"
+      - name: "silver"
+        container_access_type: "private"
+      - name: "gold"
+        container_access_type: "private"
+      - name: "reference"
+        container_access_type: "private"
+      - name: "error"
+        container_access_type: "private"
+
+sql_servers:
+  - name: "sql-ice-cream-rental-dev"
+    administrator_login: "sqladmin"
+    administrator_login_password_key_vault_name: "kv-ice-cream-rental-dev"
+    administrator_login_password_key_vault_secret_name: "sql-admin-password"
+    databases:
+      - name: "db-ice-cream-sales"
+        sku_name: "S1"
+      - name: "db-truck-inventory"
+        sku_name: "S1"
+      - name: "db-analytics"
+        sku_name: "S1"
+    firewall_rules:
+      - name: "AllowAzureServices"
+        start_ip_address: "0.0.0.0"
+        end_ip_address: "0.0.0.0"
+
+cosmos_db:
+  - name: "cosmos-ice-cream-rental-dev"
+    offer_type: "Standard"
+    kind: "MongoDB"
+    consistency_level: "Session"
+    databases:
+      - name: "weather-data"
+        throughput: 400
+        collections:
+          - name: "historical-weather"
+            partition_key_path: "/country"
+          - name: "forecasts"
+            partition_key_path: "/country"
+
+data_factories:
+  - name: "adf-ice-cream-rental-dev"
+    managed_virtual_network_enabled: true
+    public_network_enabled: true
+    github_configuration:
+      account_name: "ice-cream-data-team"
+      branch_name: "main"
+      git_url: "https://github.com"
+      repository_name: "ice-cream-rental-pipelines"
+      root_folder: "/"
+    linked_services:
+      - name: "ls_key_vault"
+        type: "AzureKeyVault"
+        key_vault_id: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ice-cream-rental-dev/providers/Microsoft.KeyVault/vaults/kv-ice-cream-rental-dev"
+      - name: "ls_blob_storage"
+        type: "AzureBlobStorage"
+        connection_string: "DefaultEndpointsProtocol=https;AccountName=stgicecreamrentaldev;AccountKey=${key_vault.kv-ice-cream-rental-dev.secrets.storage-account-key}"
+      - name: "ls_sql_database_sales"
+        type: "AzureSqlDatabase"
+        connection_string: "Server=sql-ice-cream-rental-dev.database.windows.net;Database=db-ice-cream-sales;User ID=sqladmin"
+        key_vault_linked_service_name: "ls_key_vault"
+        password_secret_name: "sql-admin-password"
+      - name: "ls_sql_database_analytics"
+        type: "AzureSqlDatabase"
+        connection_string: "Server=sql-ice-cream-rental-dev.database.windows.net;Database=db-analytics;User ID=sqladmin"
+        key_vault_linked_service_name: "ls_key_vault"
+        password_secret_name: "sql-admin-password"
+      - name: "ls_cosmos_db"
+        type: "CosmosDb"
+        account_endpoint: "https://cosmos-ice-cream-rental-dev.documents.azure.com:443/"
+        database: "weather-data"
+        key_vault_linked_service_name: "ls_key_vault"
+        password_secret_name: "cosmos-account-key"
+      - name: "ls_databricks"
+        type: "AzureDatabricks"
+        domain: "westeurope.azuredatabricks.net"
+        access_token_secret_name: "databricks-access-token"
+        existing_cluster_id: "0218-151324-gouts761"
+    integration_runtimes:
+      - name: "ir-azure-managed"
+        type: "Azure"
+        compute_type: "General"
+        core_count: 8
+      - name: "ir-self-hosted"
+        type: "SelfHosted"
+    pipelines:
+      - name: "pipeline-weather-api-ingestion"
+        description: "Pipeline to ingest weather data from OpenWeatherMap API"
+      - name: "pipeline-sales-data-processing"
+        description: "Pipeline to process ice cream sales data"
+      - name: "pipeline-reference-data-ingestion"
+        description: "Pipeline to ingest reference data (BigMac Index, rental prices)"
+      - name: "pipeline-master-orchestration"
+        description: "Master pipeline to orchestrate all data processing activities"
+    triggers:
+      - name: "trigger-daily-weather-ingestion"
+        type: "Schedule"
+        pipeline_name: "pipeline-weather-api-ingestion"
+        interval: 1
+        frequency: "Day"
+        start_time: "2025-01-01T00:00:00Z"
+        time_zone: "UTC"
+
+databricks_workspace:
+  - name: "dbw-ice-cream-rental-dev"
+    sku: "premium"
+    managed_resource_group_name: "rg-ice-cream-rental-databricks-dev"
+
+synapse_workspaces:
+  - name: "syn-ice-cream-rental-dev"
+    storage_account_name: "stgicecreamrentaldev"
+    storage_container: "synapse"
+    sql_administrator_login: "sqladmin"
+    sql_administrator_login_password_key_vault_name: "kv-ice-cream-rental-dev"
+    sql_administrator_login_password_key_vault_secret_name: "sql-admin-password"
+    managed_virtual_network_enabled: true
+    sql_pools:
+      - name: "analytics"
+        sku_name: "DW100c"
+        create_mode: "Default"
+    spark_pools:
+      - name: "transformation"
+        node_size_family: "MemoryOptimized"
+        node_size: "Small"
+        auto_scale:
+          max_node_count: 5
+          min_node_count: 2
+        auto_pause:
+          delay_in_minutes: 15
+    firewall_rules:
+      - name: "AllowAll"
+        start_ip_address: "0.0.0.0"
+        end_ip_address: "255.255.255.255"
+
+application_insights:
+  - name: "appi-ice-cream-rental-dev"
+    application_type: "web"
+    retention_in_days: 90
+
+log_analytics_workspace:
+  - name: "law-ice-cream-rental-dev"
+    sku: "PerGB2018"
+    retention_in_days: 30
+
+dashboards:
+  - name: "db-ice-cream-rental-monitoring"
+    display_name: "Ice Cream Rental Pipeline Monitoring"

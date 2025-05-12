@@ -1,0 +1,145 @@
+---
+project_id: "data-ingestion-project"
+ecosystem: "data-services"
+environment: "dev"
+location: "eastus2"
+resource_group_name: "rg-data-ingestion-dev"
+terraform_state_storage_account: "dataservicestfdev"
+
+tags:
+  environment: "dev"
+  owner: "data-team"
+  costcenter: "12345"
+
+key_vaults:
+  - name: "kv-data-ingestion-dev"
+    sku_name: "standard"
+    purge_protection_enabled: false
+    enabled_for_disk_encryption: true
+    secrets:
+      - name: "sql-admin-password"
+        value: "{{ sql_admin_password }}"
+      - name: "storage-connection-string"
+        value: "{{ storage_connection_string }}"
+    access_policies:
+      - object_id: "00000000-0000-0000-0000-000000000000"  # Replace with actual service principal ID
+        secret_permissions: ["Get", "List", "Set", "Delete"]
+
+storage_accounts:
+  - name: "stadataingestiondev"
+    account_tier: "Standard"
+    account_replication_type: "LRS"
+    is_hns_enabled: true
+    containers:
+      - name: "raw"
+        container_access_type: "private"
+      - name: "staged"
+        container_access_type: "private"
+      - name: "processed"
+        container_access_type: "private"
+
+sql_servers:
+  - name: "sql-data-ingestion-dev"
+    administrator_login: "sqladmin"
+    administrator_login_password_key_vault_name: "kv-data-ingestion-dev"
+    administrator_login_password_key_vault_secret_name: "sql-admin-password"
+    databases:
+      - name: "db-staging"
+        sku_name: "S1"
+      - name: "db-metadata"
+        sku_name: "S1"
+    firewall_rules:
+      - name: "AllowAzureServices"
+        start_ip_address: "0.0.0.0"
+        end_ip_address: "0.0.0.0"
+
+data_factories:
+  - name: "adf-data-ingestion-dev"
+    managed_virtual_network_enabled: true
+    public_network_enabled: true
+    github_configuration:
+      account_name: "myorganization"
+      branch_name: "main"
+      git_url: "https://github.com"
+      repository_name: "data-integration-pipelines"
+      root_folder: "/"
+    linked_services:
+      - name: "ls_key_vault"
+        type: "AzureKeyVault"
+        key_vault_id: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-data-ingestion-dev/providers/Microsoft.KeyVault/vaults/kv-data-ingestion-dev"
+      - name: "ls_blob_storage"
+        type: "AzureBlobStorage"
+        connection_string: "DefaultEndpointsProtocol=https;AccountName=stadataingestiondev;AccountKey=${key_vault.kv-data-ingestion-dev.secrets.storage-connection-string}"
+      - name: "ls_sql_database"
+        type: "AzureSqlDatabase"
+        connection_string: "Server=sql-data-ingestion-dev.database.windows.net;Database=db-staging;User ID=sqladmin"
+        key_vault_linked_service_name: "ls_key_vault"
+        password_secret_name: "sql-admin-password"
+    integration_runtimes:
+      - name: "ir-azure-managed"
+        type: "Azure"
+        compute_type: "General"
+        core_count: 8
+      - name: "ir-self-hosted"
+        type: "SelfHosted"
+    pipelines:
+      - name: "pipeline-ingest-data"
+        description: "Pipeline to ingest data from source to raw storage"
+        activities_json: |
+          [
+            {
+              "name": "Copy_FromSource_ToRaw",
+              "type": "Copy",
+              "policy": {
+                "timeout": "7.00:00:00",
+                "retry": 0,
+                "retryIntervalInSeconds": 30,
+                "secureOutput": false,
+                "secureInput": false
+              },
+              "typeProperties": {
+                "source": {
+                  "type": "BlobSource",
+                  "recursive": true
+                },
+                "sink": {
+                  "type": "BlobSink",
+                  "copyBehavior": "PreserveHierarchy"
+                },
+                "enableStaging": false
+              }
+            }
+          ]
+    triggers:
+      - name: "trigger-daily-ingest"
+        type: "Schedule"
+        pipeline_name: "pipeline-ingest-data"
+        interval: 1
+        frequency: "Day"
+        start_time: "2023-01-01T00:00:00Z"
+        time_zone: "UTC"
+
+synapse_workspaces:
+  - name: "synw-data-analytics-dev"
+    storage_account_name: "stadataingestiondev"
+    storage_container: "synapse"
+    sql_administrator_login: "sqladmin"
+    sql_administrator_login_password_key_vault_name: "kv-data-ingestion-dev"
+    sql_administrator_login_password_key_vault_secret_name: "sql-admin-password"
+    sql_pools:
+      - name: "dwpool"
+        sku_name: "DW100c"
+        create_mode: "Default"
+    spark_pools:
+      - name: "sparkpool"
+        node_size_family: "MemoryOptimized"
+        node_size: "Small"
+        auto_scale:
+          max_node_count: 5
+          min_node_count: 2
+        auto_pause:
+          delay_in_minutes: 15
+    firewall_rules:
+      - name: "AllowAll"
+        start_ip_address: "0.0.0.0"
+        end_ip_address: "255.255.255.255"
