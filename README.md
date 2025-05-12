@@ -89,6 +89,4 @@ make build
 make test_pyflakes
 ```
 
-## License
 
-Copyright (c) 2025 Your Organization. All rights reserved.
